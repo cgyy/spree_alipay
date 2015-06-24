@@ -56,22 +56,28 @@ module Spree
     end
 
     def checkout_api
-      order = Spree::Order.find(params[:id])  || raise(ActiveRecord::RecordNotFound)
-      render json:  { 'url' => self.pay_options(order) }
+      # order = Spree::Order.find(params[:id])  || raise(ActiveRecord::RecordNotFound)
+      order_set = OrderSet.new(params[:id])
+      render json:  { 'url' => self.pay_options(order_set) }
     end
 
     def notify
-      order = Spree::Order.find(params[:id]) || raise(ActiveRecord::RecordNotFound)
-
-      if order.complete?
-        success_return order
+      # order = Spree::Order.find(params[:id]) || raise(ActiveRecord::RecordNotFound)
+      order_set = OrderSet.new(params[:id])
+      if order_set.orders.all { |order| order.complete? }
+        success_return order_set
         return
       end
 
+      # if order.complete?
+      #   success_return order
+      #   return
+      # end
+
       request_valid = Timeout::timeout(10){ HTTParty.get("https://mapi.alipay.com/gateway.do?service=notify_verify&partner=#{payment_method.preferences[:pid]}&notify_id=#{params[:notify_id]}") }
 
-      unless request_valid && params[:total_fee] == order.total.to_s
-        failure_return order
+      unless request_valid && params[:total_fee] == order_set.total.to_s
+        failure_return order_set
         return
       end
 
@@ -80,24 +86,28 @@ module Spree
       #   return
       # end
 
-      order.payments.create!({
-        :source => Spree::AlipayNotify.create({
+      order_set.orders.each do |order|
+        order.payments.create!({
+          :source => Spree::AlipayNotify.create({
             :out_trade_no => params[:out_trade_no],
             :trade_no => params[:trade_no],
             :seller_email => params[:seller_email],
             :buyer_email => params[:buyer_email],
             :total_fee => params[:total_fee],
             :source_data => params.to_json
-        }),
-        :amount => order.total,
-        :payment_method => payment_method
+          }),
+          :amount => order.total,
+          :payment_method => payment_method
       })
 
       order.next
-      if order.complete?
-        success_return order
+      end
+
+
+      if order_set.orders.all { |order| order.complete? }
+        success_return order_set
       else
-        failure_return order
+        failure_return order_set
       end
     end
 
@@ -163,5 +173,48 @@ module Spree
     def payment_method
       Spree::PaymentMethod.find(params[:payment_method_id])
     end
+
+    class OrderSet
+      attr_reader :orders
+      def initialize(pid)
+        @orders = Spree::Order.where(id: pid.to_s.split(",").map(&:to_i)).to_a
+        raise ActiveRecord::RecordNotFound if @orders.blank?
+      end
+
+      def id
+        orders.map(&:id).join(',')
+      end
+
+      def number
+        orders.map(&:number).join(',')
+      end
+
+      def total
+        orders.sum(&:total)
+      end
+
+      def line_items
+        orders.map(&:line_items).flatten
+      end
+
+      def products
+        orders.map(&:products).flatten
+      end
+
+      def user
+        orders[0].user
+      end
+
+      def email
+        orders[0].email
+      end
+
+      def phone
+        orders[0].phone
+      end
+
+
+    end
+
   end
 end
