@@ -1,6 +1,7 @@
 module Spree
   class AlipayController < StoreController
     skip_before_filter :verify_authenticity_token
+    skip_before_filter :check_domain
 
     def alipay_timestamp
       Timeout::timeout(10){ HTTParty.get(alipay_url('service' => 'query_timestamp')) }['alipay']['response']['timestamp']['encrypt_key']
@@ -64,7 +65,7 @@ module Spree
     def notify
       # order = Spree::Order.find(params[:id]) || raise(ActiveRecord::RecordNotFound)
       order_set = OrderSet.new(params[:id])
-      if order_set.orders.all { |order| order.complete? }
+      if order_set.orders.all? { |order| order.complete? }
         success_return order_set
         return
       end
